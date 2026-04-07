@@ -2,7 +2,7 @@
 /**
  * Plugin Name: NAT Share Buttons
  * Plugin URI:  https://github.com/nat-consulting/nat-share-buttons
- * Description: Lightweight share buttons with real share counts (Facebook via Graph API, others via click tracking).
+ * Description: Lightweight share buttons with page view counter and social share links.
  * Version:     1.0.3
  * Author:      Nat Sakimura / NAT Consulting LLC
  * License:     MIT
@@ -25,19 +25,35 @@ add_action( 'init', function() {
 
 register_activation_hook( __FILE__, 'nsb_activate' );
 function nsb_activate() {
+    nsb_create_tables();
+    update_option( 'nsb_db_version', '2' );
+}
+
+// Auto-upgrade DB for existing installs.
+add_action( 'plugins_loaded', function() {
+    if ( get_option( 'nsb_db_version' ) !== '2' ) {
+        nsb_create_tables();
+        update_option( 'nsb_db_version', '2' );
+    }
+} );
+
+function nsb_create_tables() {
     global $wpdb;
-    $table   = $wpdb->prefix . 'nsb_clicks';
     $charset = $wpdb->get_charset_collate();
-    $sql = "CREATE TABLE IF NOT EXISTS {$table} (
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+    dbDelta( "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}nsb_clicks (
         id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         post_id    BIGINT UNSIGNED NOT NULL,
         network    VARCHAR(32)     NOT NULL,
         clicked_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         KEY post_network (post_id, network)
-    ) {$charset};";
-    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta( $sql );
+    ) {$charset};" );
+    dbDelta( "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}nsb_pageviews (
+        post_id BIGINT UNSIGNED NOT NULL,
+        count   BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        PRIMARY KEY (post_id)
+    ) {$charset};" );
 }
 
 // -----------------------------------------------------------------------
@@ -61,100 +77,34 @@ function nsb_enqueue() {
         true
     );
     wp_localize_script( 'nat-share-buttons', 'NSB', [
-        'ajaxurl' => admin_url( 'admin-ajax.php' ),
-        'nonce'   => wp_create_nonce( 'nsb_click' ),
+        'ajaxurl'  => admin_url( 'admin-ajax.php' ),
+        'nonce'    => wp_create_nonce( 'nsb_click' ),
+        'pv_nonce' => wp_create_nonce( 'nsb_pageview' ),
+        'post_id'  => get_the_ID(),
     ] );
 }
 
 // -----------------------------------------------------------------------
-// Share count helpers
+// Page view helpers
 // -----------------------------------------------------------------------
 
 /**
- * Get Facebook share count via Graph API.
+ * Get page view count from wp_nsb_pageviews.
  */
-function nsb_get_facebook_count( $url ) {
-    $transient = 'nsb_fb_' . md5( $url );
-    $cached    = get_transient( $transient );
-    if ( false !== $cached ) return (int) $cached;
-
-    $options = get_option( 'nsb_options', [] );
-    $token   = $options['fb_access_token'] ?? '';
-    if ( ! $token ) {
-        set_transient( 'nsb_fb_last_error', __( 'Facebook access token is not set.', 'nat-share-buttons' ), DAY_IN_SECONDS );
-        return 0;
-    }
-
-    $api_url  = 'https://graph.facebook.com/?id=' . urlencode( $url )
-              . '&fields=engagement&access_token=' . urlencode( $token );
-    $response = wp_remote_get( $api_url, [ 'timeout' => 5 ] );
-
-    if ( is_wp_error( $response ) ) {
-        set_transient( 'nsb_fb_last_error', $response->get_error_message(), DAY_IN_SECONDS );
-        return 0;
-    }
-
-    $body = json_decode( wp_remote_retrieve_body( $response ), true );
-    if ( isset( $body['error'] ) ) {
-        $msg = sprintf( '[%d] %s', $body['error']['code'] ?? 0, $body['error']['message'] ?? 'Unknown error' );
-        set_transient( 'nsb_fb_last_error', $msg, DAY_IN_SECONDS );
-        return 0;
-    }
-
-    delete_transient( 'nsb_fb_last_error' );
-    $count = isset( $body['engagement']['share_count'] )
-        ? (int) $body['engagement']['share_count'] : 0;
-
-    set_transient( $transient, $count, HOUR_IN_SECONDS );
-    return $count;
-}
-
-/**
- * Get Pinterest pin count via widgets API.
- */
-function nsb_get_pinterest_count( $url ) {
-    $transient = 'nsb_pin_' . md5( $url );
-    $cached    = get_transient( $transient );
-    if ( false !== $cached ) return (int) $cached;
-
-    $api_url  = 'https://api.pinterest.com/v1/urls/count.json?url=' . urlencode( $url );
-    $response = wp_remote_get( $api_url, [ 'timeout' => 5 ] );
-
-    if ( is_wp_error( $response ) ) return 0;
-    // Pinterest returns JSONP: receiveCount({...})
-    $body  = wp_remote_retrieve_body( $response );
-    $body  = preg_replace( '/^receiveCount\(|\)$/', '', trim( $body ) );
-    $data  = json_decode( $body, true );
-    $count = isset( $data['count'] ) ? (int) $data['count'] : 0;
-
-    set_transient( $transient, $count, HOUR_IN_SECONDS );
-    return $count;
-}
-
-/**
- * Get click-tracked count from our DB (X, LinkedIn, LINE).
- */
-function nsb_get_click_count( $post_id, $network ) {
+function nsb_get_pageview_count( $post_id ) {
     global $wpdb;
-    $table = $wpdb->prefix . 'nsb_clicks';
     return (int) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$table} WHERE post_id = %d AND network = %s",
-        $post_id, $network
+        "SELECT count FROM {$wpdb->prefix}nsb_pageviews WHERE post_id = %d",
+        $post_id
     ) );
 }
 
 /**
- * Aggregate total shares for a post.
+ * Total views = seed count + page views.
  */
-function nsb_get_total_shares( $post_id ) {
-    $url = get_permalink( $post_id );
-    $total  = 0;
-    $total += (int) get_post_meta( $post_id, '_nsb_seed_count', true );
-    $total += nsb_get_facebook_count( $url );
-    $total += nsb_get_pinterest_count( $url );
-    $total += nsb_get_click_count( $post_id, 'x' );
-    $total += nsb_get_click_count( $post_id, 'linkedin' );
-    $total += nsb_get_click_count( $post_id, 'line' );
+function nsb_get_view_count( $post_id ) {
+    $total  = (int) get_post_meta( $post_id, '_nsb_seed_count', true );
+    $total += nsb_get_pageview_count( $post_id );
     return $total;
 }
 
@@ -192,6 +142,35 @@ function nsb_ajax_click() {
 }
 
 // -----------------------------------------------------------------------
+// AJAX: record a page view
+// -----------------------------------------------------------------------
+
+add_action( 'wp_ajax_nsb_pageview',        'nsb_ajax_pageview' );
+add_action( 'wp_ajax_nopriv_nsb_pageview', 'nsb_ajax_pageview' );
+function nsb_ajax_pageview() {
+    check_ajax_referer( 'nsb_pageview', 'nonce' );
+    $post_id = absint( $_POST['post_id'] ?? 0 );
+    if ( ! $post_id ) { wp_send_json_error(); return; }
+
+    // Rate limiting: 1 view per IP per post per hour
+    $ip       = preg_replace( '/[^0-9a-fA-F.:,]/', '', $_SERVER['REMOTE_ADDR'] ?? '' );
+    $rate_key = 'nsb_pv_' . md5( $ip . '_' . $post_id );
+    if ( get_transient( $rate_key ) ) {
+        wp_send_json_success(); return;
+    }
+    set_transient( $rate_key, 1, HOUR_IN_SECONDS );
+
+    global $wpdb;
+    $wpdb->query( $wpdb->prepare(
+        "INSERT INTO {$wpdb->prefix}nsb_pageviews (post_id, count)
+         VALUES (%d, 1)
+         ON DUPLICATE KEY UPDATE count = count + 1",
+        $post_id
+    ) );
+    wp_send_json_success();
+}
+
+// -----------------------------------------------------------------------
 // HTML output
 // -----------------------------------------------------------------------
 
@@ -201,7 +180,7 @@ function nsb_render( $post_id = null ) {
 
     $url     = urlencode( get_permalink( $post_id ) );
     $title   = urlencode( get_the_title( $post_id ) );
-    $total   = nsb_get_total_shares( $post_id );
+    $total   = nsb_get_view_count( $post_id );
     // Format as 1.2k, 3.4M etc.
     if ( $total >= 1000000 ) {
         $total_f = round( $total / 1000000, 1 ) . 'M';
@@ -254,7 +233,7 @@ function nsb_render( $post_id = null ) {
     <div class="nsb-wrap" data-post-id="<?php echo esc_attr( $post_id ); ?>">
         <div class="nsb-total">
             <span class="nsb-total-number"><?php echo esc_html( $total_f ); ?></span>
-            <span class="nsb-total-label">SHARES</span>
+            <span class="nsb-total-label">VIEWS</span>
         </div>
         <div class="nsb-buttons">
             <?php foreach ( $networks as $key => $net ) : ?>
@@ -396,10 +375,8 @@ add_action( 'admin_menu', function() {
 add_action( 'admin_init', function() {
     register_setting( 'nsb_options_group', 'nsb_options', [
         'sanitize_callback' => function( $input ) {
-            delete_transient( 'nsb_fb_last_error' );
             return [
-                'disable_auto'    => ! empty( $input['disable_auto'] ) ? 1 : 0,
-                'fb_access_token' => sanitize_text_field( $input['fb_access_token'] ?? '' ),
+                'disable_auto' => ! empty( $input['disable_auto'] ) ? 1 : 0,
             ];
         }
     ] );
@@ -415,15 +392,9 @@ function nsb_settings_page() {
         'running'      => __( 'Running...', 'nat-share-buttons' ),
         'error'        => __( 'An error occurred.', 'nat-share-buttons' ),
     ];
-    $fb_error = get_transient( 'nsb_fb_last_error' );
     ?>
     <div class="wrap">
         <h1>NAT Share Buttons</h1>
-        <?php if ( $fb_error ) : ?>
-        <div class="notice notice-error">
-            <p><strong><?php _e( 'Facebook API error:', 'nat-share-buttons' ); ?></strong> <?php echo esc_html( $fb_error ); ?></p>
-        </div>
-        <?php endif; ?>
 
         <form method="post" action="options.php">
             <?php settings_fields( 'nsb_options_group' ); ?>
@@ -438,22 +409,13 @@ function nsb_settings_page() {
                         </label>
                     </td>
                 </tr>
-                <tr>
-                    <th scope="row"><?php _e( 'Facebook Access Token', 'nat-share-buttons' ); ?></th>
-                    <td>
-                        <input type="password" name="nsb_options[fb_access_token]"
-                            value="<?php echo esc_attr( $options['fb_access_token'] ?? '' ); ?>"
-                            class="regular-text" autocomplete="off" />
-                        <p class="description"><?php _e( 'App access token required to fetch Facebook share counts. Generate one at <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> or via <code>https://graph.facebook.com/oauth/access_token?client_id=APP_ID&client_secret=APP_SECRET&grant_type=client_credentials</code>.', 'nat-share-buttons' ); ?></p>
-                    </td>
-                </tr>
             </table>
             <?php submit_button(); ?>
         </form>
 
         <hr>
         <h2><?php _e( 'Migrate from Mashshare', 'nat-share-buttons' ); ?></h2>
-        <p><?php _e( 'Saves old Mashshare share counts as <code>_nsb_seed_count</code>. These are added to the live Facebook / Pinterest counts and shown as the total.', 'nat-share-buttons' ); ?></p>
+        <p><?php _e( 'Saves old Mashshare share counts as <code>_nsb_seed_count</code>. These are added to the page view count and shown as the total.', 'nat-share-buttons' ); ?></p>
 
         <table class="form-table">
             <tr>
