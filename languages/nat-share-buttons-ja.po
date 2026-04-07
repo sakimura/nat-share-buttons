@@ -1,0 +1,83 @@
+# Japanese translation for NAT Share Buttons
+# Copyright (C) 2024 Nat Sakimura / NAT Consulting LLC
+# License: MIT
+msgid ""
+msgstr ""
+"Project-Id-Version: NAT Share Buttons 1.0.0\n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: 2024-01-01 00:00+0000\n"
+"Language-Team: Japanese\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Auto Insert"
+msgstr "自動挿入"
+
+msgid "Disable auto-insertion above post content (use shortcode <code>[nat_share]</code> for manual placement)"
+msgstr "記事上部への自動挿入を無効にする（ショートコード <code>[nat_share]</code> で手動配置）"
+
+msgid "Migrate from Mashshare"
+msgstr "Mashshare からの移行"
+
+msgid "Saves old Mashshare share counts as <code>_nsb_seed_count</code>. These are added to the live Facebook / Pinterest counts and shown as the total."
+msgstr "Mashshare の旧シェア数を <code>_nsb_seed_count</code> として保存します。Facebook / Pinterest のリアルカウントに加算されて合計に表示されます。"
+
+msgid "Step 1"
+msgstr "Step 1"
+
+msgid "Detect Mashshare meta keys"
+msgstr "Mashshare のメタキーを検出"
+
+msgid "Step 2: Meta key"
+msgstr "Step 2: メタキー"
+
+msgid "Enter the key detected above (usually <code>_mashsb_shares</code>)"
+msgstr "上で検出されたキーを入力（通常は <code>_mashsb_shares</code>）"
+
+msgid "Step 3"
+msgstr "Step 3"
+
+msgid "Dry run (count only)"
+msgstr "ドライラン（件数確認のみ）"
+
+msgid "Run migration"
+msgstr "本番実行"
+
+msgid "Usage"
+msgstr "使い方"
+
+msgid "By default, buttons are automatically displayed above each post's content."
+msgstr "デフォルトでは各投稿の本文上部に自動的に表示されます。"
+
+msgid "To display at a specific location:"
+msgstr "任意の場所に表示するには:"
+
+msgid "To call from a template:"
+msgstr "テンプレートから呼ぶには:"
+
+msgid "Searching..."
+msgstr "検索中..."
+
+msgid "Keys found: "
+msgstr "見つかったキー: "
+
+msgid "No Mashshare meta keys found."
+msgstr "Mashshare のメタキーが見つかりませんでした。"
+
+msgid "Running..."
+msgstr "実行中..."
+
+msgid "An error occurred."
+msgstr "エラーが発生しました。"
+
+msgid "meta_key '%s' was not found."
+msgstr "meta_key '%s' が見つかりませんでした。"
+
+msgid "Dry run: %d posts will be migrated."
+msgstr "ドライラン: %d 件の投稿が移行されます。"
+
+msgid "Done! %d posts migrated."
+msgstr "完了！%d 件の投稿を移行しました。"

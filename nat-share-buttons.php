@@ -15,6 +15,10 @@ define( 'NSB_VERSION',    '1.0.0' );
 define( 'NSB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'NSB_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
+add_action( 'init', function() {
+    load_plugin_textdomain( 'nat-share-buttons', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+} );
+
 // -----------------------------------------------------------------------
 // Activation / Deactivation
 // -----------------------------------------------------------------------
@@ -318,7 +322,7 @@ function nsb_ajax_migrate() {
     ) );
 
     if ( empty( $rows ) ) {
-        wp_send_json_success( [ 'count' => 0, 'message' => "meta_key '{$meta_key}' が見つかりませんでした。" ] );
+        wp_send_json_success( [ 'count' => 0, 'message' => sprintf( __( "meta_key '%s' was not found.", 'nat-share-buttons' ), $meta_key ) ] );
     }
 
     $migrated = 0;
@@ -335,8 +339,8 @@ function nsb_ajax_migrate() {
         'count'   => $migrated,
         'dry_run' => $dry_run,
         'message' => $dry_run
-            ? "ドライラン: {$migrated} 件の投稿が移行されます。"
-            : "完了！{$migrated} 件の投稿を移行しました。",
+            ? sprintf( __( 'Dry run: %d posts will be migrated.', 'nat-share-buttons' ), $migrated )
+            : sprintf( __( 'Done! %d posts migrated.', 'nat-share-buttons' ), $migrated ),
     ] );
 }
 
@@ -383,6 +387,13 @@ add_action( 'admin_init', function() {
 function nsb_settings_page() {
     $options = get_option( 'nsb_options', [] );
     $nonce   = wp_create_nonce( 'nsb_migrate' );
+    $i18n    = [
+        'searching'    => __( 'Searching...', 'nat-share-buttons' ),
+        'keys_found'   => __( 'Keys found: ', 'nat-share-buttons' ),
+        'no_keys'      => __( 'No Mashshare meta keys found.', 'nat-share-buttons' ),
+        'running'      => __( 'Running...', 'nat-share-buttons' ),
+        'error'        => __( 'An error occurred.', 'nat-share-buttons' ),
+    ];
     ?>
     <div class="wrap">
         <h1>NAT Share Buttons</h1>
@@ -391,12 +402,12 @@ function nsb_settings_page() {
             <?php settings_fields( 'nsb_options_group' ); ?>
             <table class="form-table">
                 <tr>
-                    <th scope="row">自動挿入</th>
+                    <th scope="row"><?php _e( 'Auto Insert', 'nat-share-buttons' ); ?></th>
                     <td>
                         <label>
                             <input type="checkbox" name="nsb_options[disable_auto]" value="1"
                                 <?php checked( 1, $options['disable_auto'] ?? 0 ); ?> />
-                            記事上部への自動挿入を無効にする（ショートコード <code>[nat_share]</code> で手動配置）
+                            <?php _e( 'Disable auto-insertion above post content (use shortcode <code>[nat_share]</code> for manual placement)', 'nat-share-buttons' ); ?>
                         </label>
                     </td>
                 </tr>
@@ -405,29 +416,29 @@ function nsb_settings_page() {
         </form>
 
         <hr>
-        <h2>Mashshare からの移行</h2>
-        <p>Mashshare の旧シェア数を <code>_nsb_seed_count</code> として保存します。Facebook / Pinterest のリアルカウントに加算されて合計に表示されます。</p>
+        <h2><?php _e( 'Migrate from Mashshare', 'nat-share-buttons' ); ?></h2>
+        <p><?php _e( 'Saves old Mashshare share counts as <code>_nsb_seed_count</code>. These are added to the live Facebook / Pinterest counts and shown as the total.', 'nat-share-buttons' ); ?></p>
 
         <table class="form-table">
             <tr>
-                <th scope="row">Step 1</th>
+                <th scope="row"><?php _e( 'Step 1', 'nat-share-buttons' ); ?></th>
                 <td>
-                    <button id="nsb-detect" class="button">Mashshare のメタキーを検出</button>
+                    <button id="nsb-detect" class="button"><?php _e( 'Detect Mashshare meta keys', 'nat-share-buttons' ); ?></button>
                     <span id="nsb-detect-result" style="margin-left:10px;color:#666;"></span>
                 </td>
             </tr>
             <tr>
-                <th scope="row">Step 2: メタキー</th>
+                <th scope="row"><?php _e( 'Step 2: Meta key', 'nat-share-buttons' ); ?></th>
                 <td>
                     <input type="text" id="nsb-meta-key" value="_mashsb_shares" class="regular-text" />
-                    <p class="description">上で検出されたキーを入力（通常は <code>_mashsb_shares</code>）</p>
+                    <p class="description"><?php _e( 'Enter the key detected above (usually <code>_mashsb_shares</code>)', 'nat-share-buttons' ); ?></p>
                 </td>
             </tr>
             <tr>
-                <th scope="row">Step 3</th>
+                <th scope="row"><?php _e( 'Step 3', 'nat-share-buttons' ); ?></th>
                 <td>
-                    <button id="nsb-dryrun" class="button">ドライラン（件数確認のみ）</button>
-                    <button id="nsb-migrate" class="button button-primary" style="margin-left:8px;">本番実行</button>
+                    <button id="nsb-dryrun" class="button"><?php _e( 'Dry run (count only)', 'nat-share-buttons' ); ?></button>
+                    <button id="nsb-migrate" class="button button-primary" style="margin-left:8px;"><?php _e( 'Run migration', 'nat-share-buttons' ); ?></button>
                     <div id="nsb-migrate-result" style="margin-top:10px;font-weight:bold;"></div>
                 </td>
             </tr>
@@ -435,25 +446,26 @@ function nsb_settings_page() {
 
         <script>
         (function($){
-            var nonce = '<?php echo esc_js( $nonce ); ?>';
+            var nonce   = '<?php echo esc_js( $nonce ); ?>';
             var ajaxurl = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+            var i18n    = <?php echo wp_json_encode( $i18n ); ?>;
 
             $('#nsb-detect').on('click', function(e){
                 e.preventDefault();
-                $('#nsb-detect-result').text('検索中...');
+                $('#nsb-detect-result').text(i18n.searching);
                 $.post(ajaxurl, { action:'nsb_detect_keys', nonce:nonce }, function(res){
                     if(res.success && res.data.keys.length){
-                        $('#nsb-detect-result').text('見つかったキー: ' + res.data.keys.join(', '));
+                        $('#nsb-detect-result').text(i18n.keys_found + res.data.keys.join(', '));
                         $('#nsb-meta-key').val(res.data.keys[0]);
                     } else {
-                        $('#nsb-detect-result').text('Mashshare のメタキーが見つかりませんでした。');
+                        $('#nsb-detect-result').text(i18n.no_keys);
                     }
                 });
             });
 
             function doMigrate(dry){
                 var key = $('#nsb-meta-key').val();
-                $('#nsb-migrate-result').text('実行中...');
+                $('#nsb-migrate-result').text(i18n.running);
                 $.post(ajaxurl, {
                     action:   'nsb_migrate',
                     nonce:    nonce,
@@ -463,7 +475,7 @@ function nsb_settings_page() {
                     if(res.success){
                         $('#nsb-migrate-result').css('color', dry ? '#666' : '#0a0').text(res.data.message);
                     } else {
-                        $('#nsb-migrate-result').css('color','red').text('エラーが発生しました。');
+                        $('#nsb-migrate-result').css('color','red').text(i18n.error);
                     }
                 });
             }
@@ -474,10 +486,10 @@ function nsb_settings_page() {
         </script>
 
         <hr>
-        <h2>使い方</h2>
-        <p>デフォルトでは各投稿の本文上部に自動的に表示されます。</p>
-        <p>任意の場所に表示するには: <code>[nat_share]</code></p>
-        <p>テンプレートから呼ぶには: <code>&lt;?php echo nsb_render(); ?&gt;</code></p>
+        <h2><?php _e( 'Usage', 'nat-share-buttons' ); ?></h2>
+        <p><?php _e( 'By default, buttons are automatically displayed above each post\'s content.', 'nat-share-buttons' ); ?></p>
+        <p><?php _e( 'To display at a specific location:', 'nat-share-buttons' ); ?> <code>[nat_share]</code></p>
+        <p><?php _e( 'To call from a template:', 'nat-share-buttons' ); ?> <code>&lt;?php echo nsb_render(); ?&gt;</code></p>
     </div>
     <?php
 }

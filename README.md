@@ -43,20 +43,14 @@ Lightweight WordPress share-button plugin by Nat Sakimura / NAT Consulting LLC.
 
 ## Migrating from Mashshare
 
-Since "a little discrepancy is fine", simply deactivate Mashshare and activate
-this plugin. Historical counts are not imported; the total will reset to the
-live Facebook/Pinterest counts plus new click-tracking going forward.
+Go to **Settings → NAT Share Buttons** and use the migration tool:
 
-If you want to seed the click-tracking table with old Mashshare data, run:
+1. Click **Detect Mashshare meta keys** to find the meta key used by your Mashshare installation (usually `_mashsb_shares`)
+2. Confirm or edit the meta key
+3. Click **Dry run** to preview how many posts will be affected
+4. Click **Run migration** to copy the old counts to `_nsb_seed_count`
 
-```sql
--- Example: copy old X counts from Mashshare post meta
-INSERT INTO wp_nsb_clicks (post_id, network, clicked_at)
-SELECT post_id, 'x', NOW()
-FROM wp_postmeta
-WHERE meta_key = '_mashsb_shares'
--- This inserts one row per old share; adjust as needed
-```
+The seeded counts are added to the live Facebook/Pinterest counts and shown as the total.
 
 ## Notes on X/Twitter
 
