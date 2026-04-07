@@ -3,7 +3,7 @@
  * Plugin Name: NAT Share Buttons
  * Plugin URI:  https://github.com/nat-consulting/nat-share-buttons
  * Description: Lightweight share buttons with page view counter and social share links.
- * Version:     1.0.3
+ * Version:     1.1.0
  * Author:      Nat Sakimura / NAT Consulting LLC
  * License:     MIT
  * Text Domain: nat-share-buttons
@@ -11,7 +11,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'NSB_VERSION',    '1.0.3' );
+define( 'NSB_VERSION',    '1.1.0' );
 define( 'NSB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'NSB_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
