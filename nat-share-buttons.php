@@ -71,25 +71,37 @@ function nsb_enqueue() {
 // -----------------------------------------------------------------------
 
 /**
- * Get Facebook share count via Graph API (no app token needed for og:share_count).
+ * Get Facebook share count via Graph API.
  */
 function nsb_get_facebook_count( $url ) {
     $transient = 'nsb_fb_' . md5( $url );
     $cached    = get_transient( $transient );
     if ( false !== $cached ) return (int) $cached;
 
-    $options    = get_option( 'nsb_options', [] );
-    $app_id     = $options['fb_app_id']     ?? '';
-    $app_secret = $options['fb_app_secret'] ?? '';
-    if ( ! $app_id || ! $app_secret ) return 0;
+    $options = get_option( 'nsb_options', [] );
+    $token   = $options['fb_access_token'] ?? '';
+    if ( ! $token ) {
+        set_transient( 'nsb_fb_last_error', __( 'Facebook access token is not set.', 'nat-share-buttons' ), DAY_IN_SECONDS );
+        return 0;
+    }
 
     $api_url  = 'https://graph.facebook.com/?id=' . urlencode( $url )
-              . '&fields=engagement&access_token=' . urlencode( $app_id . '|' . $app_secret );
+              . '&fields=engagement&access_token=' . urlencode( $token );
     $response = wp_remote_get( $api_url, [ 'timeout' => 5 ] );
 
-    if ( is_wp_error( $response ) ) return 0;
+    if ( is_wp_error( $response ) ) {
+        set_transient( 'nsb_fb_last_error', $response->get_error_message(), DAY_IN_SECONDS );
+        return 0;
+    }
+
     $body = json_decode( wp_remote_retrieve_body( $response ), true );
-    if ( isset( $body['error'] ) ) return 0;
+    if ( isset( $body['error'] ) ) {
+        $msg = sprintf( '[%d] %s', $body['error']['code'] ?? 0, $body['error']['message'] ?? 'Unknown error' );
+        set_transient( 'nsb_fb_last_error', $msg, DAY_IN_SECONDS );
+        return 0;
+    }
+
+    delete_transient( 'nsb_fb_last_error' );
     $count = isset( $body['engagement']['share_count'] )
         ? (int) $body['engagement']['share_count'] : 0;
 
@@ -384,10 +396,10 @@ add_action( 'admin_menu', function() {
 add_action( 'admin_init', function() {
     register_setting( 'nsb_options_group', 'nsb_options', [
         'sanitize_callback' => function( $input ) {
+            delete_transient( 'nsb_fb_last_error' );
             return [
-                'disable_auto'  => ! empty( $input['disable_auto'] ) ? 1 : 0,
-                'fb_app_id'     => sanitize_text_field( $input['fb_app_id']     ?? '' ),
-                'fb_app_secret' => sanitize_text_field( $input['fb_app_secret'] ?? '' ),
+                'disable_auto'    => ! empty( $input['disable_auto'] ) ? 1 : 0,
+                'fb_access_token' => sanitize_text_field( $input['fb_access_token'] ?? '' ),
             ];
         }
     ] );
@@ -403,9 +415,15 @@ function nsb_settings_page() {
         'running'      => __( 'Running...', 'nat-share-buttons' ),
         'error'        => __( 'An error occurred.', 'nat-share-buttons' ),
     ];
+    $fb_error = get_transient( 'nsb_fb_last_error' );
     ?>
     <div class="wrap">
         <h1>NAT Share Buttons</h1>
+        <?php if ( $fb_error ) : ?>
+        <div class="notice notice-error">
+            <p><strong><?php _e( 'Facebook API error:', 'nat-share-buttons' ); ?></strong> <?php echo esc_html( $fb_error ); ?></p>
+        </div>
+        <?php endif; ?>
 
         <form method="post" action="options.php">
             <?php settings_fields( 'nsb_options_group' ); ?>
@@ -421,20 +439,12 @@ function nsb_settings_page() {
                     </td>
                 </tr>
                 <tr>
-                    <th scope="row"><?php _e( 'Facebook App ID', 'nat-share-buttons' ); ?></th>
+                    <th scope="row"><?php _e( 'Facebook Access Token', 'nat-share-buttons' ); ?></th>
                     <td>
-                        <input type="text" name="nsb_options[fb_app_id]"
-                            value="<?php echo esc_attr( $options['fb_app_id'] ?? '' ); ?>"
+                        <input type="password" name="nsb_options[fb_access_token]"
+                            value="<?php echo esc_attr( $options['fb_access_token'] ?? '' ); ?>"
                             class="regular-text" autocomplete="off" />
-                        <p class="description"><?php _e( 'Required to fetch real Facebook share counts. Create an app at <a href="https://developers.facebook.com/" target="_blank">developers.facebook.com</a>.', 'nat-share-buttons' ); ?></p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row"><?php _e( 'Facebook App Secret', 'nat-share-buttons' ); ?></th>
-                    <td>
-                        <input type="password" name="nsb_options[fb_app_secret]"
-                            value="<?php echo esc_attr( $options['fb_app_secret'] ?? '' ); ?>"
-                            class="regular-text" autocomplete="off" />
+                        <p class="description"><?php _e( 'App access token required to fetch Facebook share counts. Generate one at <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Graph API Explorer</a> or via <code>https://graph.facebook.com/oauth/access_token?client_id=APP_ID&client_secret=APP_SECRET&grant_type=client_credentials</code>.', 'nat-share-buttons' ); ?></p>
                     </td>
                 </tr>
             </table>

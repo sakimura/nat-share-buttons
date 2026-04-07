@@ -76,14 +76,17 @@ msgstr "エラーが発生しました。"
 msgid "meta_key '%s' was not found."
 msgstr "meta_key '%s' が見つかりませんでした。"
 
-msgid "Facebook App ID"
-msgstr "Facebook App ID"
+msgid "Facebook Access Token"
+msgstr "Facebook アクセストークン"
 
-msgid "Facebook App Secret"
-msgstr "Facebook App Secret"
+msgid "App access token required to fetch Facebook share counts. Generate one at <a href=\"https://developers.facebook.com/tools/explorer/\" target=\"_blank\">Graph API Explorer</a> or via <code>https://graph.facebook.com/oauth/access_token?client_id=APP_ID&client_secret=APP_SECRET&grant_type=client_credentials</code>."
+msgstr "Facebook のシェア数取得に必要なアプリアクセストークンです。<a href=\"https://developers.facebook.com/tools/explorer/\" target=\"_blank\">Graph API Explorer</a> か、<code>https://graph.facebook.com/oauth/access_token?client_id=APP_ID&client_secret=APP_SECRET&grant_type=client_credentials</code> で取得してください。"
 
-msgid "Required to fetch real Facebook share counts. Create an app at <a href=\"https://developers.facebook.com/\" target=\"_blank\">developers.facebook.com</a>."
-msgstr "Facebook のリアルシェア数を取得するために必要です。<a href=\"https://developers.facebook.com/\" target=\"_blank\">developers.facebook.com</a> でアプリを作成してください。"
+msgid "Facebook API error:"
+msgstr "Facebook API エラー:"
+
+msgid "Facebook access token is not set."
+msgstr "Facebook アクセストークンが設定されていません。"
 
 msgid "Dry run: %d posts will be migrated."
 msgstr "ドライラン: %d 件の投稿が移行されます。"
