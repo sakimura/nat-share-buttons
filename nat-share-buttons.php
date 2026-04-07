@@ -78,11 +78,18 @@ function nsb_get_facebook_count( $url ) {
     $cached    = get_transient( $transient );
     if ( false !== $cached ) return (int) $cached;
 
-    $api_url  = 'https://graph.facebook.com/?id=' . urlencode( $url ) . '&fields=engagement';
+    $options    = get_option( 'nsb_options', [] );
+    $app_id     = $options['fb_app_id']     ?? '';
+    $app_secret = $options['fb_app_secret'] ?? '';
+    if ( ! $app_id || ! $app_secret ) return 0;
+
+    $api_url  = 'https://graph.facebook.com/?id=' . urlencode( $url )
+              . '&fields=engagement&access_token=' . urlencode( $app_id . '|' . $app_secret );
     $response = wp_remote_get( $api_url, [ 'timeout' => 5 ] );
 
     if ( is_wp_error( $response ) ) return 0;
     $body = json_decode( wp_remote_retrieve_body( $response ), true );
+    if ( isset( $body['error'] ) ) return 0;
     $count = isset( $body['engagement']['share_count'] )
         ? (int) $body['engagement']['share_count'] : 0;
 
@@ -378,7 +385,9 @@ add_action( 'admin_init', function() {
     register_setting( 'nsb_options_group', 'nsb_options', [
         'sanitize_callback' => function( $input ) {
             return [
-                'disable_auto' => ! empty( $input['disable_auto'] ) ? 1 : 0,
+                'disable_auto'  => ! empty( $input['disable_auto'] ) ? 1 : 0,
+                'fb_app_id'     => sanitize_text_field( $input['fb_app_id']     ?? '' ),
+                'fb_app_secret' => sanitize_text_field( $input['fb_app_secret'] ?? '' ),
             ];
         }
     ] );
@@ -409,6 +418,23 @@ function nsb_settings_page() {
                                 <?php checked( 1, $options['disable_auto'] ?? 0 ); ?> />
                             <?php _e( 'Disable auto-insertion above post content (use shortcode <code>[nat_share]</code> for manual placement)', 'nat-share-buttons' ); ?>
                         </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'Facebook App ID', 'nat-share-buttons' ); ?></th>
+                    <td>
+                        <input type="text" name="nsb_options[fb_app_id]"
+                            value="<?php echo esc_attr( $options['fb_app_id'] ?? '' ); ?>"
+                            class="regular-text" autocomplete="off" />
+                        <p class="description"><?php _e( 'Required to fetch real Facebook share counts. Create an app at <a href="https://developers.facebook.com/" target="_blank">developers.facebook.com</a>.', 'nat-share-buttons' ); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'Facebook App Secret', 'nat-share-buttons' ); ?></th>
+                    <td>
+                        <input type="password" name="nsb_options[fb_app_secret]"
+                            value="<?php echo esc_attr( $options['fb_app_secret'] ?? '' ); ?>"
+                            class="regular-text" autocomplete="off" />
                     </td>
                 </tr>
             </table>

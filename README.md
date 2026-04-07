@@ -4,7 +4,7 @@ Lightweight WordPress share-button plugin by Nat Sakimura / NAT Consulting LLC.
 
 ## Features
 
-- **Facebook** — real share count via Graph API (no app token needed)
+- **Facebook** — real share count via Graph API (requires App ID + App Secret)
 - **X (Twitter)** — click-tracked count (stored in own DB table)
 - **Pinterest** — real pin count via widgets API
 - **LinkedIn** — click-tracked count
@@ -26,6 +26,15 @@ Lightweight WordPress share-button plugin by Nat Sakimura / NAT Consulting LLC.
 **Settings → NAT Share Buttons**
 
 - Disable auto-insertion (use shortcode instead)
+- Facebook App ID / App Secret — required to fetch real Facebook share counts
+
+## Facebook share counts
+
+The Facebook Graph API requires authentication. Without credentials, Facebook counts will show as 0.
+
+1. Go to [developers.facebook.com](https://developers.facebook.com/) and create an app (any type)
+2. Copy the **App ID** and **App Secret** from **Settings → Basic**
+3. Enter both values in **Settings → NAT Share Buttons** and save
 
 ## Shortcode
 
