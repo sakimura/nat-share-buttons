@@ -19,7 +19,7 @@ if ( 'standalone' === $mode ) {
 }
 
 $GLOBALS['test_actions']    = array();
-$GLOBALS['test_options']    = array( 'nsb_db_version' => '3', 'nlpp_activated_at' => 1 );
+$GLOBALS['test_options']    = array( 'nsb_db_version' => '4', 'nlpp_activated_at' => 1 );
 $GLOBALS['test_transients'] = array();
 $GLOBALS['test_scheduled']  = array();
 
@@ -42,9 +42,18 @@ class Test_WPDB {
     public $lifetime = array();
     public $daily = array();
     public $fail_daily = false;
+    public $lock_depth = 0;
+    public $engines = array(
+        'wp_nsb_pageviews'       => 'InnoDB',
+        'wp_nsb_pageviews_daily' => 'InnoDB',
+    );
     private $snapshot;
 
     public function prepare( $query, ...$args ) {
+        foreach ( $args as $arg ) {
+            $replacement = is_int( $arg ) ? (string) $arg : "'" . addslashes( (string) $arg ) . "'";
+            $query       = preg_replace( '/%[ds]/', $replacement, $query, 1 );
+        }
         return $query;
     }
 
@@ -59,6 +68,10 @@ class Test_WPDB {
         }
         if ( 'COMMIT' === $query ) {
             $this->snapshot = null;
+            return true;
+        }
+        if ( preg_match( '/^ALTER TABLE ([A-Za-z0-9_]+) ENGINE=InnoDB$/', $query, $matches ) ) {
+            $this->engines[ $matches[1] ] = 'InnoDB';
             return true;
         }
         if ( false !== strpos( $query, 'nsb_pageviews_daily' ) ) {
@@ -76,6 +89,26 @@ class Test_WPDB {
             return 1;
         }
         return true;
+    }
+
+    public function get_var( $query ) {
+        if ( false !== strpos( $query, 'GET_LOCK' ) ) {
+            ++$this->lock_depth;
+            return 1;
+        }
+        if ( false !== strpos( $query, 'RELEASE_LOCK' ) ) {
+            --$this->lock_depth;
+            return 1;
+        }
+        if ( false !== strpos( $query, 'information_schema.TABLES' ) ) {
+            foreach ( $this->engines as $table => $engine ) {
+                if ( false !== strpos( $query, "'{$table}'" ) ) {
+                    return $engine;
+                }
+            }
+            return null;
+        }
+        return null;
     }
 
     public function esc_like( $value ) {
@@ -127,15 +160,25 @@ function get_post( $post_id ) {
 }
 function get_transient( $key ) { return $GLOBALS['test_transients'][ $key ] ?? false; }
 function set_transient( $key, $value, $expiration ) { $GLOBALS['test_transients'][ $key ] = $value; return true; }
+function delete_transient( $key ) { unset( $GLOBALS['test_transients'][ $key ] ); return true; }
 function wp_send_json_success( $data = null, $status = 200 ) { throw new Test_Json_Response( true, $status ); }
 function wp_send_json_error( $data = null, $status = 200 ) { throw new Test_Json_Response( false, $status ); }
 function current_time( $format ) { return '2026-07-14'; }
 function wp_date( $format, $timestamp, $timezone = null ) { return gmdate( $format, $timestamp ); }
 function wp_timezone() { return new DateTimeZone( 'UTC' ); }
 function __( $text, $domain = null ) { return $text; }
+function is_singular() { return true; }
+function get_queried_object_id() { return 7; }
+function wp_enqueue_style( ...$args ) {}
+function wp_enqueue_script( ...$args ) {}
+function admin_url( $path = '' ) { return 'https://example.test/blog/wp-admin/' . ltrim( $path, '/' ); }
+function wp_parse_url( $url, $component = -1 ) { return parse_url( $url, $component ); }
+function wp_create_nonce( $action ) { return 'valid'; }
+function wp_localize_script( $handle, $name, $data ) { $GLOBALS['test_localized'][ $name ] = $data; }
 
 require dirname( __DIR__ ) . '/nat-share-buttons.php';
 test_run_hook( 'plugins_loaded' );
+nsb_enqueue();
 
 function test_assert( $condition, $message ) {
     if ( ! $condition ) {
@@ -163,6 +206,12 @@ if ( 'integrated' === $mode ) {
     test_assert( isset( $GLOBALS['test_scheduled']['nlpp_daily_cleanup'] ), 'cleanup cron should self-heal' );
     $widget = new NSB_Popular_Posts_Widget();
     test_assert( 'nat_local_popular' === $widget->id_base, 'widget id_base should preserve existing placement and options' );
+    test_assert( '/blog/wp-admin/admin-ajax.php' === $GLOBALS['test_localized']['NSB']['ajax_path'], 'AJAX path should preserve a WordPress subdirectory' );
+
+    $wpdb->engines = array_fill_keys( array_keys( $wpdb->engines ), 'MyISAM' );
+    test_assert( ! nsb_ensure_transactional_pageview_tables(), 'runtime check should reject non-transactional tables' );
+    test_assert( nsb_ensure_transactional_pageview_tables( true ), 'DB upgrade should convert page-view tables to InnoDB' );
+    test_assert( array( 'InnoDB' ) === array_values( array_unique( $wpdb->engines ) ), 'both page-view tables should be transactional after upgrade' );
 
     $key = nsb_rate_limit_key( 'nsb_pv_', 'page-view', array( 1 ) );
     test_assert( 47 === strlen( $key ), 'HMAC transient key should use a 40-character digest' );
@@ -171,6 +220,7 @@ if ( 'integrated' === $mode ) {
     $response = test_pageview( 1 );
     test_assert( $response->success, 'first integrated view should succeed' );
     test_assert( 1 === $wpdb->lifetime[1] && 1 === $wpdb->daily[1], 'first integrated view should increment both counters' );
+    test_assert( 0 === $wpdb->lock_depth, 'successful view should release its rate-limit lock' );
 
     test_pageview( 1 );
     test_assert( 1 === $wpdb->lifetime[1] && 1 === $wpdb->daily[1], 'rate-limited repeat should not increment either counter' );
@@ -186,6 +236,7 @@ if ( 'integrated' === $mode ) {
     test_assert( ! $response->success && 500 === $response->status, 'daily failure should return an error' );
     test_assert( empty( $wpdb->lifetime[3] ) && empty( $wpdb->daily[3] ), 'daily failure should roll back lifetime count' );
     test_assert( ! get_transient( nsb_rate_limit_key( 'nsb_pv_', 'page-view', array( 3 ) ) ), 'failed transaction should not rate-limit a retry' );
+    test_assert( 0 === $wpdb->lock_depth, 'failed view should release its rate-limit lock' );
 
     nsb_deactivate();
     test_assert( ! isset( $GLOBALS['test_scheduled']['nlpp_daily_cleanup'] ), 'integrated deactivation should clear its cleanup cron' );

@@ -3,7 +3,8 @@
     'use strict';
 
     function postAjax(action, nonce, params) {
-        var ajaxUrl = window.location.origin + '/wp-admin/admin-ajax.php';
+        var ajaxPath = window.NSB && NSB.ajax_path ? NSB.ajax_path : '/wp-admin/admin-ajax.php';
+        var ajaxUrl = new URL(ajaxPath, window.location.origin).toString();
         var body = new URLSearchParams(Object.assign({
             action: action,
             nonce:  nonce,

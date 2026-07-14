@@ -12,7 +12,7 @@
 if ( ! defined( 'ABSPATH' ) ) exit;
 
 define( 'NSB_VERSION',    '1.2.0' );
-define( 'NSB_DB_VERSION', '3' );
+define( 'NSB_DB_VERSION', '4' );
 define( 'NSB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'NSB_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -27,8 +27,9 @@ add_action( 'init', function() {
 register_activation_hook( __FILE__, 'nsb_activate' );
 register_deactivation_hook( __FILE__, 'nsb_deactivate' );
 function nsb_activate() {
-    nsb_create_tables();
-    update_option( 'nsb_db_version', NSB_DB_VERSION );
+    if ( nsb_create_tables() ) {
+        update_option( 'nsb_db_version', NSB_DB_VERSION );
+    }
 
     if ( ! get_option( 'nlpp_activated_at' ) ) {
         update_option( 'nlpp_activated_at', time(), false );
@@ -44,8 +45,9 @@ function nsb_deactivate() {
 // Auto-upgrade DB for existing installs.
 add_action( 'plugins_loaded', function() {
     if ( get_option( 'nsb_db_version' ) !== NSB_DB_VERSION ) {
-        nsb_create_tables();
-        update_option( 'nsb_db_version', NSB_DB_VERSION );
+        if ( nsb_create_tables() ) {
+            update_option( 'nsb_db_version', NSB_DB_VERSION );
+        }
 
         if ( ! get_option( 'nlpp_activated_at' ) ) {
             update_option( 'nlpp_activated_at', time(), false );
@@ -73,26 +75,63 @@ function nsb_create_tables() {
     global $wpdb;
     $charset = $wpdb->get_charset_collate();
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-    dbDelta( "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}nsb_clicks (
+    dbDelta( "CREATE TABLE {$wpdb->prefix}nsb_clicks (
         id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         post_id    BIGINT UNSIGNED NOT NULL,
         network    VARCHAR(32)     NOT NULL,
         clicked_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         KEY post_network (post_id, network)
-    ) {$charset};" );
-    dbDelta( "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}nsb_pageviews (
+    ) ENGINE=InnoDB {$charset};" );
+    dbDelta( "CREATE TABLE {$wpdb->prefix}nsb_pageviews (
         post_id BIGINT UNSIGNED NOT NULL,
         count   BIGINT UNSIGNED NOT NULL DEFAULT 0,
         PRIMARY KEY (post_id)
-    ) {$charset};" );
-    dbDelta( "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}nsb_pageviews_daily (
+    ) ENGINE=InnoDB {$charset};" );
+    dbDelta( "CREATE TABLE {$wpdb->prefix}nsb_pageviews_daily (
         post_id   BIGINT UNSIGNED NOT NULL,
         view_date DATE NOT NULL,
         count     BIGINT UNSIGNED NOT NULL DEFAULT 0,
         PRIMARY KEY (post_id, view_date),
         KEY view_date_count (view_date, count)
-    ) {$charset};" );
+    ) ENGINE=InnoDB {$charset};" );
+
+    return nsb_ensure_transactional_pageview_tables( true );
+}
+
+/**
+ * Ensure rollback can keep lifetime and daily counters consistent.
+ */
+function nsb_ensure_transactional_pageview_tables( $convert = false ) {
+    global $wpdb;
+
+    $tables = array(
+        $wpdb->prefix . 'nsb_pageviews',
+        $wpdb->prefix . 'nsb_pageviews_daily',
+    );
+
+    foreach ( $tables as $table ) {
+        $engine = $wpdb->get_var( $wpdb->prepare(
+            'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+            $table
+        ) );
+
+        if ( ! $engine ) {
+            error_log( sprintf( 'NAT Share Buttons: could not determine the storage engine for %s.', $table ) );
+            return false;
+        }
+
+        if ( 0 !== strcasecmp( 'InnoDB', $engine ) ) {
+            if ( ! $convert || false === $wpdb->query( "ALTER TABLE {$table} ENGINE=InnoDB" ) ) {
+                if ( $convert ) {
+                    error_log( sprintf( 'NAT Share Buttons: could not convert %s to InnoDB: %s', $table, $wpdb->last_error ) );
+                }
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 // -----------------------------------------------------------------------
@@ -118,6 +157,7 @@ function nsb_enqueue() {
         true
     );
     wp_localize_script( 'nat-share-buttons', 'NSB', [
+        'ajax_path' => wp_parse_url( admin_url( 'admin-ajax.php' ), PHP_URL_PATH ),
         'nonce'    => wp_create_nonce( 'nsb_click' ),
         'pv_nonce' => wp_create_nonce( 'nsb_pageview' ),
         'post_id'  => $post_id,
@@ -170,6 +210,21 @@ function nsb_legacy_rate_limit_key( $prefix, array $parts ) {
     $remote_addr = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) wp_unslash( $_SERVER['REMOTE_ADDR'] ) : '';
     $ip          = preg_replace( '/[^0-9a-fA-F.:,]/', '', $remote_addr );
     return $prefix . md5( $ip . '_' . implode( '_', array_map( 'strval', $parts ) ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_md5
+}
+
+/**
+ * Serialize requests sharing one keyed rate-limit scope.
+ */
+function nsb_acquire_rate_limit_lock( $rate_key ) {
+    global $wpdb;
+
+    return 1 === (int) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, 2)', 'nsb:' . $rate_key ) );
+}
+
+function nsb_release_rate_limit_lock( $rate_key ) {
+    global $wpdb;
+
+    $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', 'nsb:' . $rate_key ) );
 }
 
 function nsb_is_public_content( $post_id ) {
@@ -244,9 +299,19 @@ function nsb_ajax_pageview() {
         ? $legacy_rate_key
         : nsb_rate_limit_key( 'nsb_pv_', 'page-view', array( $post_id ) );
 
+    $manage_daily = ! defined( 'NLPP_VERSION' );
+    if ( $manage_daily && ! nsb_acquire_rate_limit_lock( $rate_key ) ) {
+        error_log( sprintf( 'NAT Share Buttons: could not acquire page-view lock for post %d.', $post_id ) );
+        wp_send_json_error( array( 'message' => 'Page-view update is busy.' ), 503 );
+        return;
+    }
+
     if ( get_transient( $rate_key ) || ( $rate_key !== $legacy_rate_key && get_transient( $legacy_rate_key ) ) ) {
         if ( $rate_key !== $legacy_rate_key ) {
             set_transient( $rate_key, 1, HOUR_IN_SECONDS );
+        }
+        if ( $manage_daily ) {
+            nsb_release_rate_limit_lock( $rate_key );
         }
         wp_send_json_success(); return;
     }
@@ -259,17 +324,24 @@ function nsb_ajax_pageview() {
     }
 
     global $wpdb;
-    $manage_daily = ! defined( 'NLPP_VERSION' );
 
     if ( $manage_daily && ! function_exists( 'nsb_increment_daily_pageview' ) ) {
         error_log( sprintf( 'NAT Share Buttons: popular-posts module missing for post %d.', $post_id ) );
+        nsb_release_rate_limit_lock( $rate_key );
         wp_send_json_error( array( 'message' => 'Page-view storage unavailable.' ), 500 );
         return;
     }
 
     if ( $manage_daily ) {
+        if ( ! nsb_ensure_transactional_pageview_tables() ) {
+            nsb_release_rate_limit_lock( $rate_key );
+            wp_send_json_error( array( 'message' => 'Page-view storage unavailable.' ), 500 );
+            return;
+        }
+
         if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
             error_log( sprintf( 'NAT Share Buttons: could not start page-view transaction for post %d: %s', $post_id, $wpdb->last_error ) );
+            nsb_release_rate_limit_lock( $rate_key );
             wp_send_json_error( array( 'message' => 'Page-view update failed.' ), 500 );
             return;
         }
@@ -291,8 +363,17 @@ function nsb_ajax_pageview() {
         $storage_error = $wpdb->last_error;
         if ( $manage_daily ) {
             $wpdb->query( 'ROLLBACK' );
+            nsb_release_rate_limit_lock( $rate_key );
         }
         error_log( sprintf( 'NAT Share Buttons: page-view update failed for post %d: %s', $post_id, $storage_error ) );
+        wp_send_json_error( array( 'message' => 'Page-view update failed.' ), 500 );
+        return;
+    }
+
+    if ( $manage_daily && ! set_transient( $rate_key, 1, HOUR_IN_SECONDS ) ) {
+        $wpdb->query( 'ROLLBACK' );
+        nsb_release_rate_limit_lock( $rate_key );
+        error_log( sprintf( 'NAT Share Buttons: could not set page-view rate limit for post %d.', $post_id ) );
         wp_send_json_error( array( 'message' => 'Page-view update failed.' ), 500 );
         return;
     }
@@ -300,12 +381,18 @@ function nsb_ajax_pageview() {
     if ( $manage_daily && false === $wpdb->query( 'COMMIT' ) ) {
         $commit_error = $wpdb->last_error;
         $wpdb->query( 'ROLLBACK' );
+        delete_transient( $rate_key );
+        nsb_release_rate_limit_lock( $rate_key );
         error_log( sprintf( 'NAT Share Buttons: page-view commit failed for post %d: %s', $post_id, $commit_error ) );
         wp_send_json_error( array( 'message' => 'Page-view update failed.' ), 500 );
         return;
     }
 
-    set_transient( $rate_key, 1, HOUR_IN_SECONDS );
+    if ( $manage_daily ) {
+        nsb_release_rate_limit_lock( $rate_key );
+    } else {
+        set_transient( $rate_key, 1, HOUR_IN_SECONDS );
+    }
     wp_send_json_success();
 }
 
