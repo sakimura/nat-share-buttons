@@ -318,7 +318,8 @@ function nsb_ajax_pageview() {
 
     // The standalone priority-1 handler has already written its daily bucket.
     // Set its shared legacy key before updating lifetime totals so a DB error
-    // cannot make a retry increment the daily bucket twice.
+    // cannot make a retry increment the daily bucket twice. During this short
+    // migration window, that consistency trade-off can lose one lifetime view.
     if ( defined( 'NLPP_VERSION' ) ) {
         set_transient( $rate_key, 1, HOUR_IN_SECONDS );
     }
@@ -333,7 +334,10 @@ function nsb_ajax_pageview() {
     }
 
     if ( $manage_daily ) {
-        if ( ! nsb_ensure_transactional_pageview_tables() ) {
+        // DB v4 is saved only after both page-view tables are verified as
+        // InnoDB, so avoid repeating information_schema queries per view.
+        if ( get_option( 'nsb_db_version' ) !== NSB_DB_VERSION ) {
+            error_log( sprintf( 'NAT Share Buttons: page-view schema upgrade incomplete for post %d.', $post_id ) );
             nsb_release_rate_limit_lock( $rate_key );
             wp_send_json_error( array( 'message' => 'Page-view storage unavailable.' ), 500 );
             return;

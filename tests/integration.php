@@ -42,7 +42,10 @@ class Test_WPDB {
     public $lifetime = array();
     public $daily = array();
     public $fail_daily = false;
+    public $fail_lifetime = false;
+    public $fail_lock = false;
     public $lock_depth = 0;
+    public $engine_check_count = 0;
     public $engines = array(
         'wp_nsb_pageviews'       => 'InnoDB',
         'wp_nsb_pageviews_daily' => 'InnoDB',
@@ -84,6 +87,10 @@ class Test_WPDB {
             return 1;
         }
         if ( false !== strpos( $query, 'nsb_pageviews' ) ) {
+            if ( $this->fail_lifetime ) {
+                $this->last_error = 'simulated lifetime failure';
+                return false;
+            }
             $post_id = (int) ( $_POST['post_id'] ?? 0 );
             $this->lifetime[ $post_id ] = ( $this->lifetime[ $post_id ] ?? 0 ) + 1;
             return 1;
@@ -93,6 +100,9 @@ class Test_WPDB {
 
     public function get_var( $query ) {
         if ( false !== strpos( $query, 'GET_LOCK' ) ) {
+            if ( $this->fail_lock ) {
+                return 0;
+            }
             ++$this->lock_depth;
             return 1;
         }
@@ -101,6 +111,7 @@ class Test_WPDB {
             return 1;
         }
         if ( false !== strpos( $query, 'information_schema.TABLES' ) ) {
+            ++$this->engine_check_count;
             foreach ( $this->engines as $table => $engine ) {
                 if ( false !== strpos( $query, "'{$table}'" ) ) {
                     return $engine;
@@ -212,6 +223,14 @@ if ( 'integrated' === $mode ) {
     test_assert( ! nsb_ensure_transactional_pageview_tables(), 'runtime check should reject non-transactional tables' );
     test_assert( nsb_ensure_transactional_pageview_tables( true ), 'DB upgrade should convert page-view tables to InnoDB' );
     test_assert( array( 'InnoDB' ) === array_values( array_unique( $wpdb->engines ) ), 'both page-view tables should be transactional after upgrade' );
+    $engine_checks_after_upgrade = $wpdb->engine_check_count;
+
+    $GLOBALS['test_options']['nsb_db_version'] = '3';
+    $response = test_pageview( 7 );
+    test_assert( ! $response->success && 500 === $response->status, 'incomplete DB upgrade should reject page-view storage' );
+    test_assert( empty( $wpdb->lifetime[7] ) && empty( $wpdb->daily[7] ), 'incomplete DB upgrade should not update either counter' );
+    test_assert( 0 === $wpdb->lock_depth, 'incomplete DB upgrade should release its rate-limit lock' );
+    $GLOBALS['test_options']['nsb_db_version'] = '4';
 
     $key = nsb_rate_limit_key( 'nsb_pv_', 'page-view', array( 1 ) );
     test_assert( 47 === strlen( $key ), 'HMAC transient key should use a 40-character digest' );
@@ -221,6 +240,7 @@ if ( 'integrated' === $mode ) {
     test_assert( $response->success, 'first integrated view should succeed' );
     test_assert( 1 === $wpdb->lifetime[1] && 1 === $wpdb->daily[1], 'first integrated view should increment both counters' );
     test_assert( 0 === $wpdb->lock_depth, 'successful view should release its rate-limit lock' );
+    test_assert( $engine_checks_after_upgrade === $wpdb->engine_check_count, 'page views should rely on the completed DB version instead of querying table engines' );
 
     test_pageview( 1 );
     test_assert( 1 === $wpdb->lifetime[1] && 1 === $wpdb->daily[1], 'rate-limited repeat should not increment either counter' );
@@ -238,6 +258,13 @@ if ( 'integrated' === $mode ) {
     test_assert( ! get_transient( nsb_rate_limit_key( 'nsb_pv_', 'page-view', array( 3 ) ) ), 'failed transaction should not rate-limit a retry' );
     test_assert( 0 === $wpdb->lock_depth, 'failed view should release its rate-limit lock' );
 
+    $wpdb->fail_lock = true;
+    $response = test_pageview( 6 );
+    test_assert( ! $response->success && 503 === $response->status, 'lock contention should return a retryable service-unavailable response' );
+    test_assert( empty( $wpdb->lifetime[6] ) && empty( $wpdb->daily[6] ), 'lock contention should not update either counter' );
+    test_assert( 0 === $wpdb->lock_depth, 'failed lock acquisition should not leave a held lock' );
+    $wpdb->fail_lock = false;
+
     nsb_deactivate();
     test_assert( ! isset( $GLOBALS['test_scheduled']['nlpp_daily_cleanup'] ), 'integrated deactivation should clear its cleanup cron' );
 } else {
@@ -251,6 +278,17 @@ if ( 'integrated' === $mode ) {
 
     test_pageview( 4 );
     test_assert( 1 === $wpdb->lifetime[4] && 1 === $wpdb->daily[4], 'shared legacy transient should prevent a repeat' );
+
+    $_POST = array( 'nonce' => 'valid', 'post_id' => 5 );
+    $wpdb->daily[5] = 1; // The standalone priority-1 handler has already succeeded.
+    $wpdb->fail_lifetime = true;
+    $response = test_pageview( 5 );
+    test_assert( ! $response->success && 500 === $response->status, 'compatibility lifetime failure should return an error' );
+    test_assert( empty( $wpdb->lifetime[5] ) && 1 === $wpdb->daily[5], 'compatibility failure should preserve the single daily bucket' );
+    test_assert( get_transient( nsb_legacy_rate_limit_key( 'nsb_pv_', array( 5 ) ) ), 'compatibility failure should keep the shared key to prevent a second daily increment' );
+    $wpdb->fail_lifetime = false;
+    test_pageview( 5 );
+    test_assert( empty( $wpdb->lifetime[5] ) && 1 === $wpdb->daily[5], 'compatibility retry should prefer one missed lifetime view over a duplicate daily view' );
 
     $response = test_pageview( 99 );
     test_assert( ! $response->success && 400 === $response->status, 'preflight should reject unsupported post types before standalone counting' );
