@@ -4,16 +4,16 @@ Lightweight WordPress share-button plugin by Nat Sakimura / NAT Consulting LLC.
 
 ## Features
 
-- **Facebook** — real share count via Graph API (requires App ID + App Secret)
-- **X (Twitter)** — click-tracked count (stored in own DB table)
-- **Pinterest** — real pin count via widgets API
-- **LinkedIn** — click-tracked count
-- **LINE** — click-tracked count
-- Large "NNN SHARES" total display, matching Mashshare style
+- Facebook, X, Pinterest, LinkedIn, and LINE share links
+- Local page-view totals with a one-hour keyed rate limit
+- Local popular-posts widget based on recent page views
+- Local click tracking for X, LinkedIn, and LINE
+- Large "NNN VIEWS" total display, matching Mashshare style
 - Auto-inserted above post content (can be disabled in settings)
 - Shortcode `[nat_share]` for manual placement
 - Template function `nsb_render()`
 - Zero external font/icon requests — SVG icons are inline
+- No social-network API requests on page load
 
 ## Installation
 
@@ -21,20 +21,32 @@ Lightweight WordPress share-button plugin by Nat Sakimura / NAT Consulting LLC.
 2. Activate via **Plugins** menu
 3. Done — buttons appear above each post automatically
 
+## Popular posts
+
+Version 1.2.0 includes the former NAT Local Popular Posts plugin as a module.
+It preserves the existing `nsb_pageviews`, `nsb_pageviews_daily`,
+`widget_nat_local_popular`, `nlpp_activated_at`, and `nlpp_daily_cleanup` data
+and identifiers, so no table copy or widget reconfiguration is required.
+
+The widget ranks published posts and pages by the selected recent-day window.
+For a new installation it uses lifetime totals during the first 48 hours while
+daily buckets warm up. Daily buckets older than 32 days are deleted.
+
+### Upgrade from the standalone plugin
+
+1. Update NAT Share Buttons to 1.2.0 while NAT Local Popular Posts remains active.
+2. Confirm page views and the existing popular-posts widget still work.
+3. Deactivate NAT Local Popular Posts. Do not delete its tables or options.
+4. On the next request, the integrated module takes over the same widget and cron hook.
+
+If the standalone plugin is reactivated for rollback, the integrated module
+automatically stands down to avoid duplicate widgets or page-view counts.
+
 ## Settings
 
-**Settings → NAT Share Buttons**
-
-- Disable auto-insertion (use shortcode instead)
-- Facebook App ID / App Secret — required to fetch real Facebook share counts
-
-## Facebook share counts
-
-The Facebook Graph API requires authentication. Without credentials, Facebook counts will show as 0.
-
-1. Go to [developers.facebook.com](https://developers.facebook.com/) and create an app (any type)
-2. Copy the **App ID** and **App Secret** from **Settings → Basic**
-3. Enter both values in **Settings → NAT Share Buttons** and save
+**Settings → NAT Share Buttons** provides the auto-insertion toggle and the
+Mashshare seed-count migration tool. No Facebook App Secret or other social
+network credential is used or required.
 
 ## Shortcode
 
@@ -59,13 +71,13 @@ Go to **Settings → NAT Share Buttons** and use the migration tool:
 3. Click **Dry run** to preview how many posts will be affected
 4. Click **Run migration** to copy the old counts to `_nsb_seed_count`
 
-The seeded counts are added to the live Facebook/Pinterest counts and shown as the total.
+The seeded counts are added to locally recorded page views and shown as the total.
 
 ## Notes on X/Twitter
 
 Twitter/X removed their public share-count API in 2015. No plugin can fetch
-real repost counts without the paid X API ($100+/month). This plugin records
-clicks on the X button instead.
+real repost counts without paid API access. This plugin can record local clicks
+on the X button, but those clicks are not mixed into popular-post rankings.
 
 ## License
 

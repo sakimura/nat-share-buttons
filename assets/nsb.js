@@ -3,11 +3,13 @@
     'use strict';
 
     function postAjax(action, nonce, params) {
+        var ajaxPath = window.NSB && NSB.ajax_path ? NSB.ajax_path : '/wp-admin/admin-ajax.php';
+        var ajaxUrl = new URL(ajaxPath, window.location.origin).toString();
         var body = new URLSearchParams(Object.assign({
             action: action,
             nonce:  nonce,
         }, params));
-        fetch(window.NSB.ajaxurl, {
+        fetch(ajaxUrl, {
             method:      'POST',
             credentials: 'same-origin',
             headers:     { 'Content-Type': 'application/x-www-form-urlencoded' },

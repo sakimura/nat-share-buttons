@@ -4,21 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Plugin overview
 
-Single-file WordPress plugin (`nat-share-buttons.php`) with two static assets. No build step, no package manager, no dependencies beyond WordPress core.
+WordPress plugin with a small popular-posts module and static assets. No build step, no package manager, no dependencies beyond WordPress core.
 
-- `nat-share-buttons.php` — all PHP logic (activation, enqueueing, share counts, AJAX, rendering, settings, migration)
+- `nat-share-buttons.php` — activation, enqueueing, page-view/click AJAX, rendering, settings, migration
+- `includes/popular-posts.php` — daily buckets, cleanup, ranking query, widget
 - `assets/nsb.css` — styles for the share widget
-- `assets/nsb.js` — vanilla JS click tracker (fire-and-forget `fetch` to `admin-ajax.php`)
+- `assets/popular.css` — styles for the popular-posts widget
+- `assets/nsb.js` — vanilla JS page-view/click tracker
 
 ## Architecture
 
-**Share count sources (two strategies):**
-- *Real API counts*: Facebook (Graph API, cached via `set_transient` for 1 hour) and Pinterest (widgets JSONP API, same caching)
-- *Click-tracked counts*: X, LinkedIn, LINE — recorded in a custom DB table `{prefix}nsb_clicks` on each button click
+**View and ranking sources:**
+- Lifetime page views in `{prefix}nsb_pageviews`
+- Daily page views in `{prefix}nsb_pageviews_daily`, retained for 32 days
+- Local click events for X, LinkedIn, and LINE in `{prefix}nsb_clicks`
 
-**Total share count** = `_nsb_seed_count` post meta (seeded from Mashshare migration) + Facebook API count + Pinterest API count + click-tracked counts for X/LinkedIn/LINE.
+**Displayed total** = `_nsb_seed_count` post meta (seeded from Mashshare migration) + local lifetime page views. Click events are not included in popular-post rankings.
 
-**Rate limiting**: 1 click per IP per post per network per hour, enforced via `set_transient`.
+**Rate limiting**: 1 view per IP/post/hour and 1 click per IP/post/network/hour. Transient identifiers use a salted HMAC; raw IP addresses are not stored.
+
+**Standalone compatibility**: if `NLPP_VERSION` exists after all plugins load,
+the integrated module does not register its widget, daily writer, or cron callback.
+The main handler temporarily keeps the legacy shared rate-limit key so staged
+upgrade and rollback do not double count.
 
 **Output methods (all call `nsb_render()`):**
 - Auto-inserted above post content via `the_content` filter (disabled by `nsb_options['disable_auto']`)
@@ -37,14 +45,19 @@ To test in the browser, the site runs at the Local by Flywheel URL configured fo
 
 **AJAX actions registered:**
 - `nsb_click` — public + logged-in, records a share click
+- `nsb_pageview` — public + logged-in, atomically updates lifetime and daily views
 - `nsb_migrate` — admin only, copies old Mashshare meta to `_nsb_seed_count`
 - `nsb_detect_keys` — admin only, finds `%mash%` meta keys in the DB
 
-**Database table** created on activation via `dbDelta`:
+**Database tables** created on activation via `dbDelta`:
 ```sql
 wp_nsb_clicks (id, post_id, network, clicked_at)
+wp_nsb_pageviews (post_id, count)
+wp_nsb_pageviews_daily (post_id, view_date, count)
 ```
 
 ## Naming conventions
 
-All functions, hooks, options, and CSS classes are prefixed `nsb_` / `nsb-`. The option key is `nsb_options` (array). Transient keys: `nsb_fb_{md5}`, `nsb_pin_{md5}`, `nsb_rl_{md5}`.
+New functions, hooks, options, and CSS classes are prefixed `nsb_` / `nsb-`.
+The legacy `nlpp_activated_at`, `nlpp_daily_cleanup`, `nat_local_popular`, and
+`nlpp-` CSS identifiers are intentionally retained for migration compatibility.
