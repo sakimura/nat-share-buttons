@@ -1,0 +1,27 @@
+.nlpp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nlpp-item + .nlpp-item {
+  margin-top: 0.65rem;
+}
+
+.nlpp-link {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+  text-decoration: none;
+}
+
+.nlpp-thumbnail {
+  flex: 0 0 40px;
+  height: 40px;
+  object-fit: cover;
+  width: 40px;
+}
+
+.nlpp-title {
+  line-height: 1.35;
+}
