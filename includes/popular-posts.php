@@ -10,6 +10,23 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+define( 'NSB_POPULAR_CONTEXT_FILTERS', true );
+
+function nsb_filter_popular_posts( $posts, $count, $days, $include_pages ) {
+    $filtered = apply_filters( 'nsb_popular_posts', $posts, $count, $days, $include_pages );
+    return is_array( $filtered ) ? array_values( $filtered ) : array();
+}
+
+function nsb_filter_popular_item_url( $url, $post_id ) {
+    $filtered = apply_filters( 'nsb_popular_item_url', $url, $post_id );
+    return is_scalar( $filtered ) ? (string) $filtered : (string) $url;
+}
+
+function nsb_filter_popular_item_title( $title, $post_id ) {
+    $filtered = apply_filters( 'nsb_popular_item_title', $title, $post_id );
+    return is_scalar( $filtered ) ? (string) $filtered : (string) $title;
+}
+
 function nsb_ensure_popular_posts_schedule() {
     if ( ! get_option( 'nlpp_activated_at' ) ) {
         update_option( 'nlpp_activated_at', time(), false );
@@ -84,12 +101,12 @@ function nsb_get_popular_posts( $count = 10, $days = 2, $include_pages = true ) 
         $params     = array_merge( $post_types, array( $start_date, $count ) );
         $rows       = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
         if ( ! empty( $rows ) ) {
-            return $rows;
+            return nsb_filter_popular_posts( $rows, $count, $days, $include_pages );
         }
     }
 
     if ( ! nsb_popular_posts_table_exists( $lifetime_table ) ) {
-        return array();
+        return nsb_filter_popular_posts( array(), $count, $days, $include_pages );
     }
 
     // Existing installations have lifetime totals but no historical buckets.
@@ -110,7 +127,7 @@ function nsb_get_popular_posts( $count = 10, $days = 2, $include_pages = true ) 
         ORDER BY score DESC, p.ID DESC
         LIMIT %d";
     $params = array_merge( $post_types, array( $count ) );
-    return $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
+    return nsb_filter_popular_posts( $wpdb->get_results( $wpdb->prepare( $sql, $params ) ), $count, $days, $include_pages );
 }
 
 function nsb_local_thumbnail_url( $post_id ) {
@@ -163,8 +180,8 @@ class NSB_Popular_Posts_Widget extends WP_Widget {
         echo '<ul class="nlpp-list">';
         foreach ( $posts as $post ) {
             $post_id = (int) $post->ID;
-            $url     = get_permalink( $post_id );
-            $name    = get_the_title( $post_id );
+            $url     = nsb_filter_popular_item_url( get_permalink( $post_id ), $post_id );
+            $name    = nsb_filter_popular_item_title( get_the_title( $post_id ), $post_id );
             $image   = $show_images ? nsb_local_thumbnail_url( $post_id ) : '';
             echo '<li class="nlpp-item">';
             echo '<a class="nlpp-link" href="' . esc_url( $url ) . '">';

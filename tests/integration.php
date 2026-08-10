@@ -19,6 +19,7 @@ if ( 'standalone' === $mode ) {
 }
 
 $GLOBALS['test_actions']    = array();
+$GLOBALS['test_filters']    = array();
 $GLOBALS['test_options']    = array( 'nsb_db_version' => '4', 'nlpp_activated_at' => 1 );
 $GLOBALS['test_transients'] = array();
 $GLOBALS['test_scheduled']  = array();
@@ -139,7 +140,20 @@ function plugin_dir_url( $file ) { return 'https://example.test/wp-content/plugi
 function plugin_basename( $file ) { return basename( dirname( $file ) ) . '/' . basename( $file ); }
 function register_activation_hook( ...$args ) {}
 function register_deactivation_hook( ...$args ) {}
-function add_filter( ...$args ) {}
+function add_filter( $hook, $callback, $priority = 10, $accepted_args = 1 ) {
+    $GLOBALS['test_filters'][ $hook ][ $priority ][] = array( $callback, $accepted_args );
+}
+function apply_filters( $hook, $value, ...$args ) {
+    if ( empty( $GLOBALS['test_filters'][ $hook ] ) ) return $value;
+    ksort( $GLOBALS['test_filters'][ $hook ] );
+    foreach ( $GLOBALS['test_filters'][ $hook ] as $callbacks ) {
+        foreach ( $callbacks as list( $callback, $accepted_args ) ) {
+            $values = array_slice( array_merge( array( $value ), $args ), 0, $accepted_args );
+            $value = call_user_func_array( $callback, $values );
+        }
+    }
+    return $value;
+}
 function add_shortcode( ...$args ) {}
 function add_action( $hook, $callback, $priority = 10 ) {
     $GLOBALS['test_actions'][ $hook ][ $priority ][] = $callback;
@@ -213,11 +227,24 @@ $_SERVER['REMOTE_ADDR'] = '192.0.2.44';
 
 if ( 'integrated' === $mode ) {
     test_assert( function_exists( 'nsb_increment_daily_pageview' ), 'integrated module should load' );
+    test_assert( defined( 'NSB_POPULAR_CONTEXT_FILTERS' ) && NSB_POPULAR_CONTEXT_FILTERS, 'popular widget should declare its context-filter contract' );
     test_assert( ! function_exists( 'nlpp_get_popular_posts' ), 'integrated module must not block standalone reactivation with legacy function names' );
     test_assert( isset( $GLOBALS['test_scheduled']['nlpp_daily_cleanup'] ), 'cleanup cron should self-heal' );
     $widget = new NSB_Popular_Posts_Widget();
     test_assert( 'nat_local_popular' === $widget->id_base, 'widget id_base should preserve existing placement and options' );
     test_assert( '/blog/wp-admin/admin-ajax.php' === $GLOBALS['test_localized']['NSB']['ajax_path'], 'AJAX path should preserve a WordPress subdirectory' );
+    add_filter( 'nsb_popular_posts', function( $posts ) { return array_slice( $posts, 0, 1 ); }, 10, 4 );
+    add_filter( 'nsb_popular_item_url', function( $url, $post_id ) { return $url . '?managed=' . $post_id; }, 10, 2 );
+    add_filter( 'nsb_popular_item_title', function( $title, $post_id ) { return 'Translated ' . $post_id . ' ' . $title; }, 10, 2 );
+    test_assert( 1 === count( nsb_filter_popular_posts( array( 1, 2 ), 10, 2, true ) ), 'popular candidates did not pass through the context filter' );
+    test_assert( 'https://example.test/1?managed=1' === nsb_filter_popular_item_url( 'https://example.test/1', 1 ), 'popular URL did not pass through the context filter' );
+    test_assert( 'Translated 1 Source title' === nsb_filter_popular_item_title( 'Source title', 1 ), 'popular title did not pass through the context filter with post ID' );
+    add_filter( 'nsb_popular_posts', function() { return 'invalid'; }, 20, 4 );
+    add_filter( 'nsb_popular_item_url', function() { return array( 'invalid' ); }, 20, 2 );
+    add_filter( 'nsb_popular_item_title', function() { return null; }, 20, 2 );
+    test_assert( array() === nsb_filter_popular_posts( array( 1, 2 ), 10, 2, true ), 'invalid candidate filter output should fail closed' );
+    test_assert( 'https://example.test/1' === nsb_filter_popular_item_url( 'https://example.test/1', 1 ), 'invalid URL filter output should preserve the source URL' );
+    test_assert( 'Source title' === nsb_filter_popular_item_title( 'Source title', 1 ), 'invalid title filter output should preserve the source title' );
 
     $wpdb->engines = array_fill_keys( array_keys( $wpdb->engines ), 'MyISAM' );
     test_assert( ! nsb_ensure_transactional_pageview_tables(), 'runtime check should reject non-transactional tables' );
