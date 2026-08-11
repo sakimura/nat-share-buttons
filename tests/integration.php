@@ -216,6 +216,10 @@ function admin_url( $path = '' ) { return 'https://example.test/blog/wp-admin/' 
 function wp_parse_url( $url, $component = -1 ) { return parse_url( $url, $component ); }
 function wp_create_nonce( $action ) { return 'valid'; }
 function wp_localize_script( $handle, $name, $data ) { $GLOBALS['test_localized'][ $name ] = $data; }
+function esc_html( $value ) { return htmlspecialchars( (string) $value, ENT_QUOTES, 'UTF-8' ); }
+function esc_url( $value ) { return (string) $value; }
+function get_permalink( $post_id ) { return 'https://example.test/' . (int) $post_id; }
+function get_the_title( $post_id ) { return 'Post ' . (int) $post_id; }
 
 require dirname( __DIR__ ) . '/nat-share-buttons.php';
 test_run_hook( 'plugins_loaded' );
@@ -242,6 +246,7 @@ function test_pageview( $post_id ) {
 $_SERVER['REMOTE_ADDR'] = '192.0.2.44';
 
 if ( 'integrated' === $mode ) {
+    test_assert( '1.2.1' === NSB_VERSION, 'integrated plugin version should match the reconciled production release' );
     test_assert( function_exists( 'nsb_increment_daily_pageview' ), 'integrated module should load' );
     test_assert( defined( 'NSB_POPULAR_CONTEXT_FILTERS' ) && NSB_POPULAR_CONTEXT_FILTERS, 'popular widget should declare its context-filter contract' );
     test_assert( ! function_exists( 'nlpp_get_popular_posts' ), 'integrated module must not block standalone reactivation with legacy function names' );
@@ -249,6 +254,19 @@ if ( 'integrated' === $mode ) {
     $widget = new NSB_Popular_Posts_Widget();
     test_assert( 'nat_local_popular' === $widget->id_base, 'widget id_base should preserve existing placement and options' );
     test_assert( '/blog/wp-admin/admin-ajax.php' === $GLOBALS['test_localized']['NSB']['ajax_path'], 'AJAX path should preserve a WordPress subdirectory' );
+    $widget_title_context = array();
+    add_filter( 'widget_title', function( $title, $instance, $id_base ) use ( &$widget_title_context ) {
+        $widget_title_context = array( $instance, $id_base );
+        return $title;
+    }, 10, 3 );
+    ob_start();
+    $widget->widget(
+        array( 'before_widget' => '', 'before_title' => '<h2>', 'after_title' => '</h2>', 'after_widget' => '' ),
+        array( 'title' => 'Popular', 'count' => 10, 'days' => 2, 'include_pages' => 1, 'show_images' => 0 )
+    );
+    ob_end_clean();
+    test_assert( 'nat_local_popular' === $widget_title_context[1], 'widget_title should receive the widget id_base' );
+    test_assert( 'Popular' === $widget_title_context[0]['title'], 'widget_title should receive the widget instance' );
     nsb_get_popular_posts( 10, 2, true );
     test_assert( false !== strpos( $wpdb->last_get_results_query, 'p.ID <> 42' ), 'daily popular query should exclude page_on_front' );
     $wpdb->get_results_responses = array(

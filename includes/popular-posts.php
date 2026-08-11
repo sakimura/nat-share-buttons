@@ -180,7 +180,7 @@ class NSB_Popular_Posts_Widget extends WP_Widget {
         }
 
         echo $args['before_widget']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-        echo $args['before_title'] . esc_html( apply_filters( 'widget_title', $title ) ) . $args['after_title']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+        echo $args['before_title'] . esc_html( apply_filters( 'widget_title', $title, $instance, $this->id_base ) ) . $args['after_title']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
         echo '<ul class="nlpp-list">';
         foreach ( $posts as $post ) {
             $post_id = (int) $post->ID;
