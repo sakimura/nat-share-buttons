@@ -84,6 +84,8 @@ function nsb_get_popular_posts( $count = 10, $days = 2, $include_pages = true ) 
     $type_holders   = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
     $daily_table    = $wpdb->prefix . 'nsb_pageviews_daily';
     $lifetime_table = $wpdb->prefix . 'nsb_pageviews';
+    $front_page_id  = absint( get_option( 'page_on_front', 0 ) );
+    $front_page_sql = $front_page_id ? ' AND p.ID <> %d' : '';
     $activated_at   = (int) get_option( 'nlpp_activated_at', time() );
     $is_warm        = time() - $activated_at >= 2 * DAY_IN_SECONDS;
 
@@ -94,11 +96,12 @@ function nsb_get_popular_posts( $count = 10, $days = 2, $include_pages = true ) 
             INNER JOIN {$daily_table} v ON v.post_id = p.ID
             WHERE p.post_status = 'publish'
               AND p.post_type IN ({$type_holders})
+              {$front_page_sql}
               AND v.view_date >= %s
             GROUP BY p.ID
             ORDER BY score DESC, p.ID DESC
             LIMIT %d";
-        $params     = array_merge( $post_types, array( $start_date, $count ) );
+        $params     = array_merge( $post_types, $front_page_id ? array( $front_page_id ) : array(), array( $start_date, $count ) );
         $rows       = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
         if ( ! empty( $rows ) ) {
             return nsb_filter_popular_posts( $rows, $count, $days, $include_pages );
@@ -123,10 +126,11 @@ function nsb_get_popular_posts( $count = 10, $days = 2, $include_pages = true ) 
         ) seed ON seed.post_id = p.ID
         WHERE p.post_status = 'publish'
           AND p.post_type IN ({$type_holders})
+          {$front_page_sql}
           AND (COALESCE(v.count, 0) + COALESCE(seed.seed_count, 0)) > 0
         ORDER BY score DESC, p.ID DESC
         LIMIT %d";
-    $params = array_merge( $post_types, array( $count ) );
+    $params = array_merge( $post_types, $front_page_id ? array( $front_page_id ) : array(), array( $count ) );
     return nsb_filter_popular_posts( $wpdb->get_results( $wpdb->prepare( $sql, $params ) ), $count, $days, $include_pages );
 }
 

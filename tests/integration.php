@@ -20,7 +20,7 @@ if ( 'standalone' === $mode ) {
 
 $GLOBALS['test_actions']    = array();
 $GLOBALS['test_filters']    = array();
-$GLOBALS['test_options']    = array( 'nsb_db_version' => '4', 'nlpp_activated_at' => 1 );
+$GLOBALS['test_options']    = array( 'nsb_db_version' => '4', 'nlpp_activated_at' => 1, 'page_on_front' => 42 );
 $GLOBALS['test_transients'] = array();
 $GLOBALS['test_scheduled']  = array();
 
@@ -47,6 +47,8 @@ class Test_WPDB {
     public $fail_lock = false;
     public $lock_depth = 0;
     public $engine_check_count = 0;
+    public $last_get_results_query = '';
+    public $get_results_responses = array();
     public $engines = array(
         'wp_nsb_pageviews'       => 'InnoDB',
         'wp_nsb_pageviews_daily' => 'InnoDB',
@@ -54,6 +56,9 @@ class Test_WPDB {
     private $snapshot;
 
     public function prepare( $query, ...$args ) {
+        if ( 1 === count( $args ) && is_array( $args[0] ) ) {
+            $args = $args[0];
+        }
         foreach ( $args as $arg ) {
             $replacement = is_int( $arg ) ? (string) $arg : "'" . addslashes( (string) $arg ) . "'";
             $query       = preg_replace( '/%[ds]/', $replacement, $query, 1 );
@@ -120,7 +125,18 @@ class Test_WPDB {
             }
             return null;
         }
+        if ( preg_match( "/SHOW TABLES LIKE '([^']+)'/", $query, $matches ) ) {
+            return stripslashes( $matches[1] );
+        }
         return null;
+    }
+
+    public function get_results( $query ) {
+        $this->last_get_results_query = $query;
+        if ( ! empty( $this->get_results_responses ) ) {
+            return array_shift( $this->get_results_responses );
+        }
+        return array( (object) array( 'ID' => 1, 'score' => 1 ) );
     }
 
     public function esc_like( $value ) {
@@ -233,6 +249,18 @@ if ( 'integrated' === $mode ) {
     $widget = new NSB_Popular_Posts_Widget();
     test_assert( 'nat_local_popular' === $widget->id_base, 'widget id_base should preserve existing placement and options' );
     test_assert( '/blog/wp-admin/admin-ajax.php' === $GLOBALS['test_localized']['NSB']['ajax_path'], 'AJAX path should preserve a WordPress subdirectory' );
+    nsb_get_popular_posts( 10, 2, true );
+    test_assert( false !== strpos( $wpdb->last_get_results_query, 'p.ID <> 42' ), 'daily popular query should exclude page_on_front' );
+    $wpdb->get_results_responses = array(
+        array(),
+        array( (object) array( 'ID' => 1, 'score' => 1 ) ),
+    );
+    nsb_get_popular_posts( 10, 2, true );
+    test_assert( false !== strpos( $wpdb->last_get_results_query, 'p.ID <> 42' ), 'lifetime popular query should exclude page_on_front' );
+    $GLOBALS['test_options']['page_on_front'] = 0;
+    nsb_get_popular_posts( 10, 2, true );
+    test_assert( false === strpos( $wpdb->last_get_results_query, 'p.ID <>' ), 'popular query should not add an exclusion when page_on_front is unset' );
+    $GLOBALS['test_options']['page_on_front'] = 42;
     add_filter( 'nsb_popular_posts', function( $posts ) { return array_slice( $posts, 0, 1 ); }, 10, 4 );
     add_filter( 'nsb_popular_item_url', function( $url, $post_id ) { return $url . '?managed=' . $post_id; }, 10, 2 );
     add_filter( 'nsb_popular_item_title', function( $title, $post_id ) { return 'Translated ' . $post_id . ' ' . $title; }, 10, 2 );
